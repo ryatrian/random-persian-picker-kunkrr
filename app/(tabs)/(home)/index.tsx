@@ -359,6 +359,55 @@ export default function RandomTextPicker() {
     showNotificationMessage('تمام متن‌ها بازنشانی شدند');
   };
 
+  // New function to revert to previous state
+  const revertToPreviousState = async () => {
+    Alert.alert(
+      'بازگشت به حالت قبل',
+      'آیا مطمئن هستید که می‌خواهید به حالت قبل برگردید؟ این عمل:\n\n• تمام متن‌های استفاده شده را به لیست اصلی برمی‌گرداند\n• ارسال خودکار را لغو می‌کند\n• پیشرفت را به صفر بازمی‌گرداند',
+      [
+        { text: 'خیر', style: 'cancel' },
+        { 
+          text: 'بله، برگرد', 
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // Cancel auto-send session
+              const canceledSession: AutoSendSession = {
+                isActive: false,
+                startTime: '09:00',
+                endTime: '17:00',
+                textCount: 5,
+                schedules: [],
+                createdAt: new Date()
+              };
+              setAutoSendSession(canceledSession);
+              await saveAutoSendSession(canceledSession);
+
+              // Restore all texts to available pool
+              const revertedData: TextData = {
+                texts: [...textData.texts, ...textData.usedTexts],
+                usedTexts: [],
+                totalTexts: textData.totalTexts
+              };
+
+              setTextData(revertedData);
+              await saveData(revertedData);
+
+              // Clear selected text
+              setSelectedText('');
+
+              showNotificationMessage('با موفقیت به حالت قبل برگشتید');
+              console.log('Successfully reverted to previous state');
+            } catch (error) {
+              console.log('Error reverting to previous state:', error);
+              showNotificationMessage('خطا در بازگشت به حالت قبل', true);
+            }
+          }
+        }
+      ]
+    );
+  };
+
   const generateRandomSchedules = (startTime: string, endTime: string, count: number): AutoSendSchedule[] => {
     const schedules: AutoSendSchedule[] = [];
     const today = new Date();
@@ -864,6 +913,23 @@ export default function RandomTextPicker() {
           </TouchableOpacity>
         )}
 
+        {/* Revert to Previous State Button */}
+        {(textData.usedTexts.length > 0 || autoSendSession.isActive) && (
+          <TouchableOpacity
+            style={[
+              buttonStyles.accent,
+              commonStyles.fullWidthButton,
+              { backgroundColor: currentColors.warning }
+            ]}
+            onPress={revertToPreviousState}
+          >
+            <IconSymbol name="arrow.uturn.backward" size={20} color={currentColors.card} />
+            <Text style={[textStyles.button, { color: currentColors.card, marginTop: 4 }]}>
+              برگرد به حالت قبل
+            </Text>
+          </TouchableOpacity>
+        )}
+
         {/* Scheduled Sends List */}
         {autoSendSession.schedules.length > 0 && (
           <View style={[commonStyles.card, { backgroundColor: currentColors.card }]}>
@@ -932,7 +998,8 @@ export default function RandomTextPicker() {
             • با کلیک روی "کپی متن بعدی" یک متن تصادفی انتخاب می‌شود{'\n'}
             • متن انتخاب شده به کلیپ‌بورد کپی می‌شود{'\n'}
             • می‌توانید متن را در واتساپ ارسال کنید{'\n'}
-            • برای ارسال خودکار، زمان شروع و پایان و تعداد متن‌ها را تنظیم کنید
+            • برای ارسال خودکار، زمان شروع و پایان و تعداد متن‌ها را تنظیم کنید{'\n'}
+            • دکمه "برگرد به حالت قبل" تمام تغییرات را بازمی‌گرداند
           </Text>
         </View>
 
