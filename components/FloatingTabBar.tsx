@@ -190,8 +190,15 @@ export default function FloatingTabBar({
                     <Text
                       style={[
                         styles.tabLabel,
-                        { color: theme.dark ? '#98989D' : '#8E8E93' },
-                        isActive && { color: theme.colors.primary, fontWeight: '600' },
+                        { 
+                          color: theme.dark ? '#98989D' : '#8E8E93',
+                          fontFamily: 'Vazirmatn_400Regular'
+                        },
+                        isActive && { 
+                          color: theme.colors.primary, 
+                          fontWeight: '600',
+                          fontFamily: 'Vazirmatn_600SemiBold'
+                        },
                       ]}
                     >
                       {tab.label}

@@ -16,6 +16,12 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { Button } from "@/components/button";
 import { WidgetProvider } from "@/contexts/WidgetContext";
+import {
+  Vazirmatn_400Regular,
+  Vazirmatn_500Medium,
+  Vazirmatn_600SemiBold,
+  Vazirmatn_700Bold,
+} from '@expo-google-fonts/vazirmatn';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
@@ -29,6 +35,10 @@ export default function RootLayout() {
   const networkState = useNetworkState();
   const [loaded] = useFonts({
     SpaceMono: require("../assets/fonts/SpaceMono-Regular.ttf"),
+    Vazirmatn_400Regular,
+    Vazirmatn_500Medium,
+    Vazirmatn_600SemiBold,
+    Vazirmatn_700Bold,
   });
 
   useEffect(() => {
@@ -37,17 +47,7 @@ export default function RootLayout() {
     }
   }, [loaded]);
 
-  React.useEffect(() => {
-    if (
-      !networkState.isConnected &&
-      networkState.isInternetReachable === false
-    ) {
-      Alert.alert(
-        "🔌 You are offline",
-        "You can keep using the app! Your changes will be saved locally and synced when you are back online."
-      );
-    }
-  }, [networkState.isConnected, networkState.isInternetReachable]);
+  // Removed network check as this is a local-only app
 
   if (!loaded) {
     return null;
@@ -57,24 +57,24 @@ export default function RootLayout() {
     ...DefaultTheme,
     dark: false,
     colors: {
-      primary: "rgb(0, 122, 255)", // System Blue
-      background: "rgb(242, 242, 247)", // Light mode background
-      card: "rgb(255, 255, 255)", // White cards/surfaces
-      text: "rgb(0, 0, 0)", // Black text for light mode
-      border: "rgb(216, 216, 220)", // Light gray for separators/borders
-      notification: "rgb(255, 59, 48)", // System Red
+      primary: "#3B82F6", // Blue for main interactive elements
+      background: "#F9FAFB", // Very light gray for a clean look
+      card: "#FFFFFF", // White for card backgrounds
+      text: "#1F2937", // Dark gray for readability
+      border: "#E5E7EB", // Light gray for borders
+      notification: "#EF4444", // Red for errors
     },
   };
 
   const CustomDarkTheme: Theme = {
     ...DarkTheme,
     colors: {
-      primary: "rgb(10, 132, 255)", // System Blue (Dark Mode)
-      background: "rgb(1, 1, 1)", // True black background for OLED displays
-      card: "rgb(28, 28, 30)", // Dark card/surface color
-      text: "rgb(255, 255, 255)", // White text for dark mode
-      border: "rgb(44, 44, 46)", // Dark gray for separators/borders
-      notification: "rgb(255, 69, 58)", // System Red (Dark Mode)
+      primary: "#60A5FA", // Lighter blue for dark mode
+      background: "#111827", // Dark background
+      card: "#1F2937", // Dark card background
+      text: "#F9FAFB", // Light text
+      border: "#374151", // Dark border
+      notification: "#F87171", // Lighter red
     },
   };
   return (
