@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   View, 
@@ -18,6 +19,7 @@ import * as Clipboard from 'expo-clipboard';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as XLSX from 'xlsx';
 import { useTheme } from '@react-navigation/native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { IconSymbol } from '@/components/IconSymbol';
 import { colors, darkColors, commonStyles, textStyles, buttonStyles } from '@/styles/commonStyles';
 
@@ -25,6 +27,22 @@ interface TextData {
   texts: string[];
   usedTexts: string[];
   totalTexts: number;
+}
+
+interface AutoSendSchedule {
+  id: string;
+  text: string;
+  scheduledTime: Date;
+  sent: boolean;
+}
+
+interface AutoSendSession {
+  isActive: boolean;
+  startTime: string;
+  endTime: string;
+  textCount: number;
+  schedules: AutoSendSchedule[];
+  createdAt: Date;
 }
 
 export default function RandomTextPicker() {
@@ -44,10 +62,46 @@ export default function RandomTextPicker() {
   const [isLoading, setIsLoading] = useState(false);
   const spinValue = useRef(new Animated.Value(0)).current;
 
+  // Auto-send states
+  const [showAutoSendModal, setShowAutoSendModal] = useState(false);
+  const [autoSendSession, setAutoSendSession] = useState<AutoSendSession>({
+    isActive: false,
+    startTime: '09:00',
+    endTime: '17:00',
+    textCount: 5,
+    schedules: [],
+    createdAt: new Date()
+  });
+  const [tempStartTime, setTempStartTime] = useState('09:00');
+  const [tempEndTime, setTempEndTime] = useState('17:00');
+  const [tempTextCount, setTempTextCount] = useState('5');
+  const [showStartTimePicker, setShowStartTimePicker] = useState(false);
+  const [showEndTimePicker, setShowEndTimePicker] = useState(false);
+  const [currentTime, setCurrentTime] = useState(new Date());
+
   // Load saved data on app start
   useEffect(() => {
     loadSavedData();
+    loadAutoSendSession();
+    
+    // Update current time every second
+    const timeInterval = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
+
+    return () => clearInterval(timeInterval);
   }, []);
+
+  // Check for scheduled sends
+  useEffect(() => {
+    if (autoSendSession.isActive) {
+      const checkInterval = setInterval(() => {
+        checkScheduledSends();
+      }, 1000);
+
+      return () => clearInterval(checkInterval);
+    }
+  }, [autoSendSession]);
 
   // Animate loading spinner
   useEffect(() => {
@@ -74,6 +128,34 @@ export default function RandomTextPicker() {
       }
     } catch (error) {
       console.log('Error loading saved data:', error);
+    }
+  };
+
+  const loadAutoSendSession = async () => {
+    try {
+      const savedSession = await AsyncStorage.getItem('autoSendSession');
+      if (savedSession) {
+        const parsedSession = JSON.parse(savedSession);
+        // Convert date strings back to Date objects
+        parsedSession.schedules = parsedSession.schedules.map((schedule: any) => ({
+          ...schedule,
+          scheduledTime: new Date(schedule.scheduledTime)
+        }));
+        parsedSession.createdAt = new Date(parsedSession.createdAt);
+        setAutoSendSession(parsedSession);
+        console.log('Loaded auto-send session:', parsedSession);
+      }
+    } catch (error) {
+      console.log('Error loading auto-send session:', error);
+    }
+  };
+
+  const saveAutoSendSession = async (session: AutoSendSession) => {
+    try {
+      await AsyncStorage.setItem('autoSendSession', JSON.stringify(session));
+      console.log('Auto-send session saved');
+    } catch (error) {
+      console.log('Error saving auto-send session:', error);
     }
   };
 
@@ -224,8 +306,9 @@ export default function RandomTextPicker() {
     }
   };
 
-  const sendToWhatsApp = async () => {
-    if (!selectedText) {
+  const sendToWhatsApp = async (text?: string) => {
+    const textToSend = text || selectedText;
+    if (!textToSend) {
       showNotificationMessage('ابتدا متنی را انتخاب کنید', true);
       return;
     }
@@ -245,7 +328,7 @@ export default function RandomTextPicker() {
         return;
       }
 
-      const message = encodeURIComponent(selectedText);
+      const message = encodeURIComponent(textToSend);
       const whatsappUrl = `https://wa.me/${phoneNumber}?text=${message}`;
       
       await Linking.openURL(whatsappUrl);
@@ -276,7 +359,212 @@ export default function RandomTextPicker() {
     showNotificationMessage('تمام متن‌ها بازنشانی شدند');
   };
 
+  const generateRandomSchedules = (startTime: string, endTime: string, count: number): AutoSendSchedule[] => {
+    const schedules: AutoSendSchedule[] = [];
+    const today = new Date();
+    
+    // Parse start and end times
+    const [startHour, startMinute] = startTime.split(':').map(Number);
+    const [endHour, endMinute] = endTime.split(':').map(Number);
+    
+    const startDate = new Date(today);
+    startDate.setHours(startHour, startMinute, 0, 0);
+    
+    const endDate = new Date(today);
+    endDate.setHours(endHour, endMinute, 0, 0);
+    
+    // If end time is before start time, assume it's next day
+    if (endDate <= startDate) {
+      endDate.setDate(endDate.getDate() + 1);
+    }
+    
+    const totalDuration = endDate.getTime() - startDate.getTime();
+    const interval = totalDuration / count;
+    
+    // Get available texts
+    const availableTexts = [...textData.texts];
+    
+    for (let i = 0; i < count && i < availableTexts.length; i++) {
+      // Calculate base time for this slot
+      const baseTime = startDate.getTime() + (interval * i);
+      
+      // Add random variation (±15 minutes)
+      const randomVariation = (Math.random() - 0.5) * 30 * 60 * 1000; // ±30 minutes in milliseconds
+      const scheduledTime = new Date(baseTime + randomVariation);
+      
+      // Ensure it's within bounds
+      if (scheduledTime < startDate) scheduledTime.setTime(startDate.getTime());
+      if (scheduledTime > endDate) scheduledTime.setTime(endDate.getTime());
+      
+      // Pick random text
+      const randomIndex = Math.floor(Math.random() * availableTexts.length);
+      const text = availableTexts.splice(randomIndex, 1)[0];
+      
+      schedules.push({
+        id: `schedule_${Date.now()}_${i}`,
+        text,
+        scheduledTime,
+        sent: false
+      });
+    }
+    
+    // Sort by scheduled time
+    schedules.sort((a, b) => a.scheduledTime.getTime() - b.scheduledTime.getTime());
+    
+    return schedules;
+  };
+
+  const startAutoSend = async () => {
+    // Validate inputs
+    if (!tempStartTime || !tempEndTime || !tempTextCount) {
+      showNotificationMessage('لطفا تمام فیلدها را پر کنید', true);
+      return;
+    }
+
+    const count = parseInt(tempTextCount);
+    if (isNaN(count) || count <= 0) {
+      showNotificationMessage('تعداد متن‌ها باید عدد مثبت باشد', true);
+      return;
+    }
+
+    if (count > textData.texts.length) {
+      showNotificationMessage(`تعداد متن‌های موجود (${textData.texts.length}) کمتر از تعداد درخواستی است`, true);
+      return;
+    }
+
+    // Generate schedules
+    const schedules = generateRandomSchedules(tempStartTime, tempEndTime, count);
+    
+    const newSession: AutoSendSession = {
+      isActive: true,
+      startTime: tempStartTime,
+      endTime: tempEndTime,
+      textCount: count,
+      schedules,
+      createdAt: new Date()
+    };
+
+    setAutoSendSession(newSession);
+    await saveAutoSendSession(newSession);
+    setShowAutoSendModal(false);
+    
+    showNotificationMessage(`ارسال خودکار ${count} متن برنامه‌ریزی شد`);
+  };
+
+  const cancelAutoSend = async () => {
+    Alert.alert(
+      'لغو ارسال خودکار',
+      'آیا مطمئن هستید که می‌خواهید ارسال خودکار را لغو کنید?',
+      [
+        { text: 'خیر', style: 'cancel' },
+        { 
+          text: 'بله', 
+          style: 'destructive',
+          onPress: async () => {
+            const canceledSession: AutoSendSession = {
+              ...autoSendSession,
+              isActive: false
+            };
+            setAutoSendSession(canceledSession);
+            await saveAutoSendSession(canceledSession);
+            showNotificationMessage('ارسال خودکار لغو شد');
+          }
+        }
+      ]
+    );
+  };
+
+  const checkScheduledSends = async () => {
+    if (!autoSendSession.isActive) return;
+
+    const now = new Date();
+    const updatedSchedules = [...autoSendSession.schedules];
+    let hasChanges = false;
+
+    for (let i = 0; i < updatedSchedules.length; i++) {
+      const schedule = updatedSchedules[i];
+      if (!schedule.sent && now >= schedule.scheduledTime) {
+        // Send the text
+        await sendToWhatsApp(schedule.text);
+        
+        // Mark as sent
+        updatedSchedules[i] = { ...schedule, sent: true };
+        hasChanges = true;
+        
+        // Remove text from available texts
+        const updatedData: TextData = {
+          texts: textData.texts.filter(text => text !== schedule.text),
+          usedTexts: [...textData.usedTexts, schedule.text],
+          totalTexts: textData.totalTexts
+        };
+        setTextData(updatedData);
+        await saveData(updatedData);
+        
+        console.log('Auto-sent text:', schedule.text);
+      }
+    }
+
+    if (hasChanges) {
+      const updatedSession = {
+        ...autoSendSession,
+        schedules: updatedSchedules
+      };
+      
+      // Check if all schedules are completed
+      const allSent = updatedSchedules.every(schedule => schedule.sent);
+      if (allSent) {
+        updatedSession.isActive = false;
+        showNotificationMessage('ارسال خودکار تکمیل شد');
+      }
+      
+      setAutoSendSession(updatedSession);
+      await saveAutoSendSession(updatedSession);
+    }
+  };
+
+  const formatTime = (date: Date) => {
+    return date.toLocaleTimeString('fa-IR', { 
+      hour: '2-digit', 
+      minute: '2-digit',
+      hour12: false 
+    });
+  };
+
+  const getTimeUntilNext = (scheduledTime: Date) => {
+    const now = new Date();
+    const diff = scheduledTime.getTime() - now.getTime();
+    
+    if (diff <= 0) return 'در حال ارسال...';
+    
+    const minutes = Math.floor(diff / (1000 * 60));
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    
+    if (hours > 0) {
+      return `${hours} ساعت و ${remainingMinutes} دقیقه`;
+    } else {
+      return `${remainingMinutes} دقیقه`;
+    }
+  };
+
+  const onStartTimeChange = (event: any, selectedDate?: Date) => {
+    setShowStartTimePicker(false);
+    if (selectedDate) {
+      const timeString = selectedDate.toTimeString().slice(0, 5);
+      setTempStartTime(timeString);
+    }
+  };
+
+  const onEndTimeChange = (event: any, selectedDate?: Date) => {
+    setShowEndTimePicker(false);
+    if (selectedDate) {
+      const timeString = selectedDate.toTimeString().slice(0, 5);
+      setTempEndTime(timeString);
+    }
+  };
+
   const progress = textData.totalTexts > 0 ? (textData.usedTexts.length / textData.totalTexts) * 100 : 0;
+  const nextSchedule = autoSendSession.schedules.find(s => !s.sent);
 
   return (
     <>
@@ -310,6 +598,48 @@ export default function RandomTextPicker() {
             <Text style={[textStyles.body, { color: currentColors.card, textAlign: 'center', marginLeft: 8 }]}>
               {showNotification}
             </Text>
+          </View>
+        )}
+
+        {/* Auto-Send Status */}
+        {autoSendSession.isActive && (
+          <View style={[
+            commonStyles.card, 
+            { 
+              backgroundColor: currentColors.accent,
+              borderColor: currentColors.accent,
+              marginBottom: 16
+            }
+          ]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
+              <IconSymbol name="clock" size={24} color={currentColors.card} />
+              <Text style={[textStyles.subtitle, { color: currentColors.card, marginLeft: 8 }]}>
+                ارسال خودکار فعال است
+              </Text>
+            </View>
+            
+            {nextSchedule && (
+              <View style={{ alignItems: 'center', marginBottom: 12 }}>
+                <Text style={[textStyles.body, { color: currentColors.card, textAlign: 'center' }]}>
+                  ارسال بعدی: {formatTime(nextSchedule.scheduledTime)}
+                </Text>
+                <Text style={[textStyles.bodySecondary, { color: currentColors.card, textAlign: 'center' }]}>
+                  {getTimeUntilNext(nextSchedule.scheduledTime)}
+                </Text>
+              </View>
+            )}
+            
+            <TouchableOpacity
+              style={[
+                buttonStyles.outline,
+                { borderColor: currentColors.card, marginTop: 8 }
+              ]}
+              onPress={cancelAutoSend}
+            >
+              <Text style={[textStyles.button, { color: currentColors.card }]}>
+                لغو ارسال خودکار
+              </Text>
+            </TouchableOpacity>
           </View>
         )}
 
@@ -500,6 +830,23 @@ export default function RandomTextPicker() {
           </TouchableOpacity>
         </View>
 
+        {/* Auto-Send Button */}
+        {textData.texts.length > 0 && !autoSendSession.isActive && (
+          <TouchableOpacity
+            style={[
+              buttonStyles.accent,
+              commonStyles.fullWidthButton,
+              { backgroundColor: currentColors.warning }
+            ]}
+            onPress={() => setShowAutoSendModal(true)}
+          >
+            <IconSymbol name="clock.arrow.circlepath" size={20} color={currentColors.card} />
+            <Text style={[textStyles.button, { color: currentColors.card, marginTop: 4 }]}>
+              ارسال خودکار به واتساپ
+            </Text>
+          </TouchableOpacity>
+        )}
+
         {/* WhatsApp Button */}
         {selectedText !== '' && (
           <TouchableOpacity
@@ -508,13 +855,53 @@ export default function RandomTextPicker() {
               commonStyles.fullWidthButton,
               { backgroundColor: currentColors.accent }
             ]}
-            onPress={sendToWhatsApp}
+            onPress={() => sendToWhatsApp()}
           >
             <IconSymbol name="message" size={20} color={currentColors.card} />
             <Text style={[textStyles.button, { color: currentColors.card, marginTop: 4 }]}>
               ارسال در واتساپ
             </Text>
           </TouchableOpacity>
+        )}
+
+        {/* Scheduled Sends List */}
+        {autoSendSession.schedules.length > 0 && (
+          <View style={[commonStyles.card, { backgroundColor: currentColors.card }]}>
+            <Text style={[textStyles.subtitle, { color: currentColors.text, marginBottom: 16 }]}>
+              برنامه ارسال
+            </Text>
+            {autoSendSession.schedules.map((schedule, index) => (
+              <View 
+                key={schedule.id}
+                style={{
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  paddingVertical: 8,
+                  borderBottomWidth: index < autoSendSession.schedules.length - 1 ? 1 : 0,
+                  borderBottomColor: currentColors.border
+                }}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={[textStyles.body, { color: currentColors.text }]}>
+                    {formatTime(schedule.scheduledTime)}
+                  </Text>
+                  <Text style={[textStyles.bodySecondary, { color: currentColors.textSecondary }]} numberOfLines={1}>
+                    {schedule.text.substring(0, 30)}...
+                  </Text>
+                </View>
+                <View style={{ alignItems: 'center' }}>
+                  {schedule.sent ? (
+                    <IconSymbol name="checkmark.circle.fill" size={24} color={currentColors.accent} />
+                  ) : (
+                    <Text style={[textStyles.bodySecondary, { color: currentColors.textSecondary, fontSize: 12 }]}>
+                      {getTimeUntilNext(schedule.scheduledTime)}
+                    </Text>
+                  )}
+                </View>
+              </View>
+            ))}
+          </View>
         )}
 
         {/* Reset Button */}
@@ -544,9 +931,160 @@ export default function RandomTextPicker() {
             • متن‌های ستون اول خوانده می‌شوند{'\n'}
             • با کلیک روی "کپی متن بعدی" یک متن تصادفی انتخاب می‌شود{'\n'}
             • متن انتخاب شده به کلیپ‌بورد کپی می‌شود{'\n'}
-            • می‌توانید متن را در واتساپ ارسال کنید
+            • می‌توانید متن را در واتساپ ارسال کنید{'\n'}
+            • برای ارسال خودکار، زمان شروع و پایان و تعداد متن‌ها را تنظیم کنید
           </Text>
         </View>
+
+        {/* Auto-Send Modal */}
+        <Modal
+          visible={showAutoSendModal}
+          transparent={true}
+          animationType="slide"
+          onRequestClose={() => setShowAutoSendModal(false)}
+        >
+          <View style={commonStyles.modalOverlay}>
+            <View style={[commonStyles.modalContent, { backgroundColor: currentColors.card, maxHeight: '80%' }]}>
+              <Text style={[textStyles.title, { color: currentColors.text, fontSize: 20 }]}>
+                ارسال خودکار به واتساپ
+              </Text>
+              
+              <ScrollView style={{ width: '100%', maxHeight: 400 }}>
+                {/* Start Time */}
+                <View style={{ marginBottom: 16 }}>
+                  <Text style={[textStyles.body, { color: currentColors.text, marginBottom: 8 }]}>
+                    زمان شروع:
+                  </Text>
+                  <TouchableOpacity
+                    style={[
+                      commonStyles.input,
+                      { 
+                        backgroundColor: currentColors.background,
+                        borderColor: currentColors.border,
+                        justifyContent: 'center'
+                      }
+                    ]}
+                    onPress={() => setShowStartTimePicker(true)}
+                  >
+                    <Text style={[textStyles.body, { color: currentColors.text }]}>
+                      {tempStartTime}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* End Time */}
+                <View style={{ marginBottom: 16 }}>
+                  <Text style={[textStyles.body, { color: currentColors.text, marginBottom: 8 }]}>
+                    زمان پایان:
+                  </Text>
+                  <TouchableOpacity
+                    style={[
+                      commonStyles.input,
+                      { 
+                        backgroundColor: currentColors.background,
+                        borderColor: currentColors.border,
+                        justifyContent: 'center'
+                      }
+                    ]}
+                    onPress={() => setShowEndTimePicker(true)}
+                  >
+                    <Text style={[textStyles.body, { color: currentColors.text }]}>
+                      {tempEndTime}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Text Count */}
+                <View style={{ marginBottom: 16 }}>
+                  <Text style={[textStyles.body, { color: currentColors.text, marginBottom: 8 }]}>
+                    تعداد متن‌ها:
+                  </Text>
+                  <TextInput
+                    style={[
+                      commonStyles.input,
+                      { 
+                        backgroundColor: currentColors.background,
+                        borderColor: currentColors.border,
+                        color: currentColors.text
+                      }
+                    ]}
+                    value={tempTextCount}
+                    onChangeText={setTempTextCount}
+                    placeholder="مثال: 5"
+                    placeholderTextColor={currentColors.textSecondary}
+                    keyboardType="numeric"
+                  />
+                  <Text style={[textStyles.bodySecondary, { color: currentColors.textSecondary, marginTop: 4 }]}>
+                    حداکثر: {textData.texts.length} متن موجود
+                  </Text>
+                </View>
+
+                {/* Info */}
+                <View style={{ 
+                  backgroundColor: currentColors.highlight, 
+                  padding: 16, 
+                  borderRadius: 8, 
+                  marginBottom: 16 
+                }}>
+                  <Text style={[textStyles.bodySecondary, { color: currentColors.text }]}>
+                    • متن‌ها در زمان‌های تصادفی بین بازه انتخابی ارسال می‌شوند{'\n'}
+                    • هر متن فقط یک بار ارسال می‌شود{'\n'}
+                    • برنامه در پس‌زمینه کار می‌کند{'\n'}
+                    • شماره واتساپ باید در تنظیمات وارد شده باشد
+                  </Text>
+                </View>
+              </ScrollView>
+
+              <View style={[commonStyles.buttonRow, { marginTop: 16 }]}>
+                <TouchableOpacity
+                  style={[
+                    buttonStyles.outline,
+                    commonStyles.halfWidthButton,
+                    { borderColor: currentColors.textSecondary }
+                  ]}
+                  onPress={() => setShowAutoSendModal(false)}
+                >
+                  <Text style={[textStyles.button, { color: currentColors.textSecondary }]}>
+                    لغو
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    buttonStyles.primary,
+                    commonStyles.halfWidthButton,
+                    { backgroundColor: currentColors.accent }
+                  ]}
+                  onPress={startAutoSend}
+                >
+                  <Text style={[textStyles.button, { color: currentColors.card }]}>
+                    شروع ارسال
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Time Pickers */}
+        {showStartTimePicker && (
+          <DateTimePicker
+            value={new Date(`2000-01-01T${tempStartTime}:00`)}
+            mode="time"
+            is24Hour={true}
+            display="default"
+            onChange={onStartTimeChange}
+          />
+        )}
+
+        {showEndTimePicker && (
+          <DateTimePicker
+            value={new Date(`2000-01-01T${tempEndTime}:00`)}
+            mode="time"
+            is24Hour={true}
+            display="default"
+            onChange={onEndTimeChange}
+          />
+        )}
 
         {/* Reset Confirmation Modal */}
         <Modal
